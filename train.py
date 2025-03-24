@@ -28,6 +28,8 @@ from utils.isolate_rng import isolate_rng
 from utils.patches import apply_patches
 from utils.unsloth_utils import unsloth_checkpoint
 from utils.pipeline import ManualPipelineModule
+import wandb
+
 
 TIMESTEP_QUANTILES_FOR_EVAL = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
@@ -160,9 +162,13 @@ def _evaluate(model_engine, eval_dataloaders, tb_writer, step, eval_gradient_acc
             losses.append(loss)
             if is_main_process():
                 tb_writer.add_scalar(f'{name}/loss_quantile_{quantile:.2f}', loss, step)
+                if wandb_enable:   
+                    wandb.log({f'{name}/loss_quantile_{quantile:.2f}': loss, "step": step})
         avg_loss = sum(losses) / len(losses)
         if is_main_process():
             tb_writer.add_scalar(f'{name}/loss', avg_loss, step)
+            if wandb_enable:
+                wandb.log({f'{name}/loss': avg_loss, "step": step})
 
     duration = time.time() - start
     if is_main_process():
@@ -264,7 +270,21 @@ if __name__ == '__main__':
         model = chroma.ChromaPipeline(config)
     else:
         raise NotImplementedError(f'Model type {model_type} is not implemented')
+    
 
+
+    # add wandb
+    wandb_enable = config['monitoring']['enable_wandb']
+    
+    if wandb_enable:
+        wandb_run_name = config['monitoring']['wandb_run_name']
+        wandb_tracker_name=config['monitoring']['wandb_tracker_name']
+        wandb_api_key=config['monitoring']['wandb_api_key']
+        logging_dir = config['monitoring']['log_dir']
+        if wandb_api_key is not None and wandb_tracker_name is not None and wandb_run_name is not None:
+            wandb.login(key=wandb_api_key)
+            wandb.init(project=wandb_tracker_name, config=config, name=wandb_run_name, dir=logging_dir)
+            
     # import sys, PIL
     # test_image = sys.argv[1]
     # with torch.no_grad():
@@ -642,6 +662,8 @@ if __name__ == '__main__':
 
         if is_main_process() and step % config['logging_steps'] == 0:
             tb_writer.add_scalar(f'train/loss', loss, step)
+            if wandb_enable:
+                wandb.log({"train/loss": loss, "step": step})
             if optimizer.__class__.__name__ == 'Prodigy':
                 prodigy_d = get_prodigy_d(optimizer)
                 tb_writer.add_scalar(f'train/prodigy_d', prodigy_d, step)
@@ -652,6 +674,8 @@ if __name__ == '__main__':
         if finished_epoch:
             if is_main_process():
                 tb_writer.add_scalar(f'train/epoch_loss', epoch_loss/num_steps, epoch)
+                if wandb_enable:
+                    wandb.log({f'train/epoch_loss': epoch_loss/num_steps, "epoch": epoch})
             epoch_loss = 0
             num_steps = 0
             epoch = new_epoch
